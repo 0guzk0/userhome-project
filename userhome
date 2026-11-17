@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+usage() {
+    cat <<'USAGE'
+Использование:
+  userhome [-f файл] [имя_пользователя]
+
+Показывает домашний каталог пользователя из файла в формате /etc/passwd.
+
+Параметры:
+  -f файл       Использовать указанный файл вместо /etc/passwd.
+  имя_пользователя  Имя пользователя. Если не указано, используется
+                    имя текущего пользователя.
+  --help, --usage  Показать эту справку.
+
+Коды завершения:
+  0  Пользователь найден, домашний каталог выведен.
+  1  Пользователь не найден.
+  2  Файл недоступен или указан некорректный синтаксис.
+USAGE
+}
+
+file=/etc/passwd
+username=
+username_given=0
+file_given=0
+
+
+while (($# > 0)); do
+    case "$1" in
+        --help|--usage)
+            if (($# == 1)); then
+                usage
+                exit 0
+            else
+                usage >&2
+                exit 2
+            fi
+            ;;
+        -f)
+            if ((file_given)) || (($# < 2)) || [[ -z "$2" ]]; then
+                usage >&2
+                exit 2
+            fi
+            file=$2
+            file_given=1
+            shift 2
+            ;;
+        -*)
+            usage >&2
+            exit 2
+            ;;
+        *)
+            if ((username_given)); then
+                usage >&2
+                exit 2
+            fi
+            username=$1
+            username_given=1
+            shift
+            ;;
+    esac
+done
+
+if ((!username_given)); then
+    username=$(id -un) || {
+        printf 'userhome: не удалось определить текущего пользователя\n' >&2
+        exit 1
+    }
+fi
+
+if [[ ! -f "$file" ]]; then
+    printf 'userhome: файл не найден: %s\n' "$file" >&2
+    exit 2
+fi
+
+if [[ ! -r "$file" ]]; then
+    printf 'userhome: нет доступа для чтения файла: %s\n' "$file" >&2
+    exit 2
+fi
+
+
+set -o pipefail
+passwd_line=$(grep -F -- "$username:" "$file" |
+    while IFS= read -r line; do
+        account=${line%%:*}
+        if [[ "$account" == "$username" ]]; then
+            printf '%s\n' "$line"
+            break
+        fi
+    done)
+search_status=$?
+
+if ((search_status > 1)); then
+    printf 'userhome: ошибка чтения файла: %s\n' "$file" >&2
+    exit 2
+fi
+
+if [[ -z "$passwd_line" ]]; then
+    printf 'userhome: пользователь не найден: %s\n' "$username" >&2
+    exit 1
+fi
+
+home_dir=$(printf '%s\n' "$passwd_line" | cut -d: -f6) || {
+    printf 'userhome: не удалось выделить домашний каталог пользователя: %s\n' "$username" >&2
+    exit 2
+}
+
+printf '%s\n' "$home_dir"
+exit 0
